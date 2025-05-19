@@ -17,7 +17,7 @@ API_PORT = 8000
 DEFAULT_REGION = "us"
 
 def setup_ngrok():
-    """Set up ngrok configuration."""
+    """Set up ngrok configuration."""   
     if NGROK_AUTH_TOKEN:
         print(f"Setting up ngrok with auth token...")
         conf.get_default().auth_token = NGROK_AUTH_TOKEN

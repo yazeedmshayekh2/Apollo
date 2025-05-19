@@ -5,7 +5,9 @@
 
 // API configuration
 const API_CONFIG = {
-  baseUrl: window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'http://'+window.location.hostname+':8000',
+  baseUrl: window.location.hostname.includes('ngrok-free.app') 
+    ? window.location.origin 
+    : (window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'http://'+window.location.hostname+':8000'),
   endpoints: {
     process: '/api/process',
     jobStatus: '/api/jobs/',
