@@ -1,0 +1,57 @@
+# Core dependencies
+torch
+torchvision
+qwen-vl-utils
+transformers
+Pillow
+numpy
+opencv-python
+pyyaml
+bitsandbytes
+
+# Model specific dependencies
+accelerate
+safetensors
+sentencepiece
+protobuf
+einops
+
+# Optional optimizations
+onnxruntime-gpu; platform_system != "Darwin"
+onnxruntime; platform_system == "Darwin"
+
+# Utilities
+tqdm
+requests
+python-dotenv
+jsonschema
+
+# API dependencies
+fastapi
+uvicorn
+python-multipart
+
+# Storage related
+boto3  # For S3 storage
+psycopg2-binary  # For PostgreSQL
+pymongo  # For MongoDB
+
+# For embeddings
+scikit-learn  # For TF-IDF and other ML algorithms
+
+# Monitoring
+prometheus-client
+sentry-sdk
+
+# Development and testing
+pytest
+black
+flake8
+mypy
+
+# Networking and tunneling
+pyngrok  # For exposing API via ngrok
+gunicorn  # Production WSGI server
+
+# Other dependencies
+aiohttp
