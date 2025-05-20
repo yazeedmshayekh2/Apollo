@@ -8,6 +8,7 @@ numpy
 opencv-python
 pyyaml
 bitsandbytes
+ultralytics
 
 # Model specific dependencies
 accelerate
@@ -38,6 +39,7 @@ pymongo  # For MongoDB
 
 # For embeddings
 scikit-learn  # For TF-IDF and other ML algorithms
+tensorflow
 
 # Monitoring
 prometheus-client
@@ -55,3 +57,4 @@ gunicorn  # Production WSGI server
 
 # Other dependencies
 aiohttp
+
