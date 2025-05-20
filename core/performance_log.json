@@ -1282,6 +1282,42 @@
       },
       "sample_id": "ocr_a59a0c0c05b24ef19caf5ae9c994b30a",
       "details": {}
+    },
+    {
+      "model_id": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "model_name": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "version": "2.5",
+      "timestamp": "2025-05-20T08:43:50.430872",
+      "metrics": {
+        "processing_time": 6.662538528442383,
+        "succeeded": true
+      },
+      "sample_id": "ocr_fce696909c704d8aad60514348c6c05b",
+      "details": {}
+    },
+    {
+      "model_id": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "model_name": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "version": "2.5",
+      "timestamp": "2025-05-20T08:44:46.644609",
+      "metrics": {
+        "processing_time": 6.66937518119812,
+        "succeeded": true
+      },
+      "sample_id": "ocr_817dadb7297a43ddad2600e02a30bda4",
+      "details": {}
+    },
+    {
+      "model_id": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "model_name": "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+      "version": "2.5",
+      "timestamp": "2025-05-20T08:48:32.673485",
+      "metrics": {
+        "processing_time": 6.674807548522949,
+        "succeeded": true
+      },
+      "sample_id": "ocr_b5cf325677364d02899689c01440a81f",
+      "details": {}
     }
   ]
 }

@@ -10,11 +10,15 @@ import os
 from typing import Optional, List, Tuple, Dict, Any
 import numpy as np
 from scipy.spatial.distance import cosine
+from sklearn.metrics.pairwise import cosine_similarity
 import cv2
 import torch
 from PIL import Image
 import torchvision.models as models
 import torchvision.transforms as transforms
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.models import Model
 
 # Set up logging
 logging.basicConfig(level=logging.INFO,
@@ -51,6 +55,8 @@ class SimpleProcessor:
         # Load models
         self.face_cascade = None
         self.model = None
+        self.yolo_model = None
+        self.use_keras = False
         self.transform = transforms.Compose([
             transforms.Resize(256),
             transforms.CenterCrop(224),
@@ -62,42 +68,61 @@ class SimpleProcessor:
         ])
     
     def load_face_detector(self):
-        """Load OpenCV face detector."""
-        if self.face_cascade is not None:
-            return
+        """Load YOLOv9 face detector."""
+        if self.yolo_model is not None:
+            return True
             
         try:
-            # Use OpenCV's Haar cascade for face detection
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            self.face_cascade = cv2.CascadeClassifier(cascade_path)
-            if self.face_cascade.empty():
-                logger.error(f"Failed to load cascade classifier from {cascade_path}")
-                return False
-            logger.info("Loaded OpenCV Haar cascade for face detection")
+            # Use YOLOv9 for face detection
+            self.yolo_model = torch.hub.load('./yolov9', 'custom', path='yolov9-face-detection.pt', force_reload=True, source='local')
+            self.yolo_model.to(self.device)
+            logger.info("Loaded YOLOv9 model for face detection")
             return True
         except Exception as e:
-            logger.error(f"Error loading face detector: {e}")
-            return False
+            logger.error(f"Error loading YOLOv9 face detector: {e}")
+            logger.warning("Falling back to OpenCV Haar cascade")
+            
+            try:
+                # Use OpenCV's Haar cascade for face detection as fallback
+                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                self.face_cascade = cv2.CascadeClassifier(cascade_path)
+                if self.face_cascade.empty():
+                    logger.error(f"Failed to load cascade classifier from {cascade_path}")
+                    return False
+                logger.info("Loaded OpenCV Haar cascade for face detection")
+                return True
+            except Exception as e:
+                logger.error(f"Error loading fallback face detector: {e}")
+                return False
     
     def load_feature_extractor(self):
-        """Load ResNet50 model for feature extraction."""
+        """Load ResNet50 model with custom weights for feature extraction."""
         if self.model is not None:
             return True
             
         try:
-            # Load pre-trained ResNet-50
-            self.model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+            # Load pre-trained ResNet-50 with custom weights
+            try:
+                # First try loading from Keras
+                self.model = keras.models.load_model('./resnet-50.h5')
+                # Remove the classification layer
+                self.model = tf.keras.Model(inputs=self.model.input, outputs=self.model.layers[-2].output)
+                logger.info("Loaded ResNet-50 model from Keras weights")
+                self.use_keras = True
+            except Exception as e:
+                logger.error(f"Error loading Keras model: {e}")
+                logger.warning("Falling back to PyTorch ResNet50")
+                # Fallback to PyTorch
+                self.model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+                # Remove the last fully connected layer to get features
+                self.model = torch.nn.Sequential(*(list(self.model.children())[:-1]))
+                # Set to evaluation mode
+                self.model.eval()
+                # Move to device
+                self.model = self.model.to(self.device)
+                self.use_keras = False
+                logger.info("Loaded ResNet-50 model from PyTorch")
             
-            # Remove the last fully connected layer to get features
-            self.model = torch.nn.Sequential(*(list(self.model.children())[:-1]))
-            
-            # Set to evaluation mode
-            self.model.eval()
-            
-            # Move to device
-            self.model = self.model.to(self.device)
-            
-            logger.info("Loaded ResNet-50 model for feature extraction")
             return True
         except Exception as e:
             logger.error(f"Error loading feature extraction model: {e}")
@@ -119,8 +144,11 @@ class SimpleProcessor:
             if img is None:
                 logger.error(f"Failed to load image: {image_path}")
                 return None
+            
+            # Convert from BGR to RGB for YOLO
+            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 
-            # Convert to grayscale for face detection
+            # Convert to grayscale for Haar cascade (if needed as fallback)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
             # Equalize histogram to improve contrast
@@ -128,6 +156,7 @@ class SimpleProcessor:
             
             return {
                 'original': img,
+                'rgb': rgb_img,
                 'gray': gray
             }
         except Exception as e:
@@ -136,10 +165,10 @@ class SimpleProcessor:
     
     def detect_faces(self, img_dict):
         """
-        Detect faces in the image.
+        Detect faces in the image using YOLOv9.
         
         Args:
-            img_dict: Dictionary with original and grayscale images
+            img_dict: Dictionary with original and processed images
             
         Returns:
             List of detected face regions (x, y, w, h)
@@ -148,20 +177,48 @@ class SimpleProcessor:
             return []
             
         try:
-            # Detect faces
-            faces = self.face_cascade.detectMultiScale(
-                img_dict['gray'],
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
-                flags=cv2.CASCADE_SCALE_IMAGE
-            )
-            
-            if len(faces) == 0:
-                logger.warning("No faces detected")
+            if self.yolo_model is not None:
+                # Use YOLO for detection
+                results = self.yolo_model(img_dict['rgb'])
+                detections = results.xyxy[0].cpu().numpy()  # x1, y1, x2, y2, confidence, class
                 
-            # Convert to list of tuples (x, y, w, h)
-            return [tuple(map(int, face)) for face in faces]
+                if len(detections) == 0:
+                    logger.warning("No faces detected with YOLOv9")
+                    faces = []
+                else:
+                    # Convert [x1, y1, x2, y2] to [x, y, w, h] format
+                    faces = []
+                    for detection in detections:
+                        x1, y1, x2, y2 = map(int, detection[:4])
+                        faces.append((x1, y1, x2-x1, y2-y1))
+                    
+                    logger.info(f"YOLOv9 detected {len(faces)} faces")
+                
+                if len(faces) > 0:
+                    return faces
+                
+                # Fall back to Haar cascade if YOLO detected no faces
+                logger.warning("Falling back to Haar cascade")
+            
+            # Use Haar cascade (original method or fallback)
+            if self.face_cascade is not None:
+                faces = self.face_cascade.detectMultiScale(
+                    img_dict['gray'],
+                    scaleFactor=1.1,
+                    minNeighbors=5,
+                    minSize=(30, 30),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                if len(faces) == 0:
+                    logger.warning("No faces detected with Haar cascade")
+                    
+                # Convert to list of tuples (x, y, w, h)
+                return [tuple(map(int, face)) for face in faces]
+            
+            logger.error("No face detection method available")
+            return []
+            
         except Exception as e:
             logger.error(f"Error detecting faces: {e}")
             return []
@@ -214,23 +271,42 @@ class SimpleProcessor:
             return None
             
         try:
-            # Convert from BGR to RGB
-            face_img_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-            
-            # Convert to PIL Image
-            pil_img = Image.fromarray(face_img_rgb)
-            
-            # Apply transformations
-            img_tensor = self.transform(pil_img).unsqueeze(0).to(self.device)
-            
-            # Extract features
-            with torch.no_grad():
-                features = self.model(img_tensor)
+            # Handle the different model types
+            if self.use_keras:
+                # Process for Keras model
+                # Convert from BGR to RGB
+                face_img_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
                 
-            # Convert to numpy array
-            features = features.squeeze().cpu().numpy()
-            
-            return features
+                # Resize to the input shape the model expects
+                resized = cv2.resize(face_img_rgb, (224, 224))
+                
+                # Preprocess for Keras
+                x = np.expand_dims(resized, axis=0)
+                x = x / 255.0  # Normalize to [0,1]
+                
+                # Extract features
+                features = self.model.predict(x)
+                
+                return features[0]  # Return as a 1D array
+            else:
+                # Process for PyTorch model
+                # Convert from BGR to RGB
+                face_img_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                
+                # Convert to PIL Image
+                pil_img = Image.fromarray(face_img_rgb)
+                
+                # Apply transformations
+                img_tensor = self.transform(pil_img).unsqueeze(0).to(self.device)
+                
+                # Extract features
+                with torch.no_grad():
+                    features = self.model(img_tensor)
+                    
+                # Convert to numpy array
+                features = features.squeeze().cpu().numpy()
+                
+                return features
         except Exception as e:
             logger.error(f"Error extracting features: {e}")
             return None
@@ -454,7 +530,7 @@ def get_document_embeddings(user_id: Optional[str] = None, document_id: Optional
 
 def compute_similarity(embedding1, embedding2):
     """
-    Compute cosine similarity between two embeddings.
+    Compute similarity between two embeddings using Siamese network.
     
     Args:
         embedding1: First embedding vector
@@ -463,23 +539,46 @@ def compute_similarity(embedding1, embedding2):
     Returns:
         float: Similarity score (1.0 = identical, 0.0 = completely different)
     """
-    # Ensure embeddings are the right shape
-    if embedding1.ndim > 1:
-        embedding1 = embedding1.flatten()
-    if embedding2.ndim > 1:
-        embedding2 = embedding2.flatten()
+    try:
+        # Ensure embeddings are the right shape
+        if embedding1.ndim > 1:
+            embedding1 = embedding1.flatten()
+        if embedding2.ndim > 1:
+            embedding2 = embedding2.flatten()
+            
+        # Check if shapes match
+        if embedding1.shape != embedding2.shape:
+            logger.warning(f"Embedding shapes don't match: {embedding1.shape} vs {embedding2.shape}")
+            # Try to resize if possible
+            min_size = min(embedding1.size, embedding2.size)
+            embedding1 = embedding1[:min_size]
+            embedding2 = embedding2[:min_size]
         
-    # Check if shapes match
-    if embedding1.shape != embedding2.shape:
-        logger.warning(f"Embedding shapes don't match: {embedding1.shape} vs {embedding2.shape}")
-        # Try to resize if possible
-        min_size = min(embedding1.size, embedding2.size)
-        embedding1 = embedding1[:min_size]
-        embedding2 = embedding2[:min_size]
-    
-    # Compute cosine similarity (1 - cosine distance)
-    similarity = 1.0 - cosine(embedding1, embedding2)
-    return similarity
+        # Compute cosine similarity for input to siamese network
+        similarity_matrix = cosine_similarity(
+            embedding1.reshape(1, -1), 
+            embedding2.reshape(1, -1)
+        )
+        
+        # Load siamese model
+        try:
+            sia_model = keras.models.load_model('siamese.h5')
+            # Predict final similarity using the siamese network
+            similarity = sia_model.predict(np.array([similarity_matrix[0][0]]).reshape(1, -1))
+            similarity = float(similarity[0][0])  # Extract the scalar value
+            logger.info(f"Siamese network similarity: {similarity:.4f}")
+            return similarity
+        except Exception as e:
+            logger.error(f"Error using siamese network: {e}")
+            logger.warning("Falling back to cosine similarity")
+            # Fallback to cosine similarity (1 - cosine distance)
+            similarity = 1.0 - cosine(embedding1, embedding2)
+            return similarity
+            
+    except Exception as e:
+        logger.error(f"Error computing similarity: {e}")
+        # Return a default low similarity
+        return 0.0
 
 def process_image_and_compare(image_path, document_ids=None, user_id=None, similarity_threshold=0.8, use_simple=False):
     """

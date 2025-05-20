@@ -66,3 +66,6 @@ sample_data/**/*.txt
 secrets/
 *_credentials.json
 *_secret.json
+
+*.h5
+*.pt
