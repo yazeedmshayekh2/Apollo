@@ -10,6 +10,13 @@ pyyaml
 bitsandbytes
 ultralytics
 
+# YOLOv9 specific dependencies
+matplotlib
+seaborn
+scipy
+thop
+pandas
+
 # Model specific dependencies
 accelerate
 safetensors
@@ -58,3 +65,4 @@ gunicorn  # Production WSGI server
 # Other dependencies
 aiohttp
 
+IPython

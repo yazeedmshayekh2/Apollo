@@ -150,6 +150,17 @@ async def process_document_task(
         # Record start time
         start_time = datetime.now()
         
+        # Get user_id from the job info if not provided directly
+        if not user_id and job_id in jobs and "user_id" in jobs[job_id]:
+            user_id = jobs[job_id]["user_id"]
+            logger.info(f"Got user_id={user_id} from job data")
+            
+        # Log if we have a user_id for MongoDB storage
+        if user_id:
+            logger.info(f"Will save results to MongoDB for user_id={user_id}")
+        else:
+            logger.warning("No user_id provided - results will NOT be saved to MongoDB")
+            
         # Update job status and notify
         jobs[job_id]["status"] = "processing"
         jobs[job_id]["processing_stage"] = "starting"
@@ -260,8 +271,53 @@ async def process_document_task(
                 # Import database modules
                 from database import ocr_store, db, audit_log, image_store
                 
-                # Generate document ID
-                document_id = f"{user_id}_{job_id}"
+                # Prepare extracted data
+                extracted_data = result.get("extracted_json", {})
+                if not extracted_data and "extracted_json_str" in result:
+                    try:
+                        extracted_data = json.loads(result["extracted_json_str"])
+                    except:
+                        extracted_data = {}
+                
+                # Get ID number from extracted data - prioritize this for MongoDB storage
+                id_number = None
+                
+                # First look for the id_number in personal_info (most common location for ID cards)
+                if extracted_data and "personal_info" in extracted_data and "id_number" in extracted_data["personal_info"]:
+                    id_number = extracted_data["personal_info"]["id_number"]
+                    logger.info(f"Found ID number in personal_info: {id_number}")
+                
+                # Fallback to other possible locations
+                elif extracted_data:
+                    # Try common variations of where ID might be located
+                    possible_paths = [
+                        ("document_info", "id_number"),
+                        ("document_info", "document_number"),
+                        ("identification", "id_number"),
+                        ("identification", "number"),
+                        ("id", "number"),
+                        ("permit", "number")
+                    ]
+                    
+                    for section, field in possible_paths:
+                        if section in extracted_data and field in extracted_data[section]:
+                            id_number = extracted_data[section][field]
+                            logger.info(f"Found ID number in {section}.{field}: {id_number}")
+                            break
+                
+                # Use ID number as document_id if available, otherwise use the default
+                if id_number:
+                    document_id = id_number
+                    logger.info(f"Using extracted ID number {id_number} as document_id for MongoDB storage")
+                else:
+                    document_id = f"{user_id}_{job_id}"
+                    logger.warning(f"No ID number found in OCR data. Using default document_id={document_id}")
+                    
+                    # Additional diagnostic - look at extracted data structure
+                    if extracted_data:
+                        logger.debug(f"Extracted data structure: {json.dumps(list(extracted_data.keys()), indent=2)}")
+                        if "personal_info" in extracted_data:
+                            logger.debug(f"personal_info fields: {json.dumps(list(extracted_data['personal_info'].keys()), indent=2)}")
                 
                 # Create embedding from extracted text
                 embedding = None
@@ -284,14 +340,6 @@ async def process_document_task(
                     logger.info(f"Generated embedding with shape {embedding.shape}")
                 except Exception as e:
                     logger.warning(f"Error generating embedding: {e}")
-                
-                # Prepare extracted data
-                extracted_data = result.get("extracted_json", {})
-                if not extracted_data and "extracted_json_str" in result:
-                    try:
-                        extracted_data = json.loads(result["extracted_json_str"])
-                    except:
-                        extracted_data = {}
                 
                 # Save OCR data with embedding
                 ocr_store.save_ocr_data(
@@ -387,16 +435,23 @@ async def process_document_endpoint(
     front: UploadFile = File(..., description="Front side of the document"),
     back: Optional[UploadFile] = File(None, description="Back side of the document (optional)"),
     output_format: str = Form("json", description="Output format (json, yaml, csv)"),
-    user_id: str = Form(None, description="User ID for storing extracted data"),
+    user_id: str = Form("auto_generated", description="User ID for storing extracted data"),
 ):
     """
     Process a document (vehicle registration card or ID card).
     
     This endpoint accepts front and optionally back images of the document,
     processes them using OCR, and extracts structured information.
-    The extracted data can be associated with a user ID for storage in MongoDB.
+    The extracted data will be stored using the extracted ID number from the document.
     """
     try:
+        # Set a random user_id if not provided or using the default value
+        if not user_id or user_id == "auto_generated":
+            user_id = f"user_{uuid.uuid4()}"
+            
+        # Debug log the user_id received from the form
+        logger.info(f"Received process request with auto-generated user_id={user_id}")
+        
         # Generate job ID
         job_id = str(uuid.uuid4())
         
@@ -409,7 +464,8 @@ async def process_document_endpoint(
             "completed_at": None,
             "document_type": None,
             "processing_stage": "uploading",
-            "processing_message": "Uploading document..."
+            "processing_message": "Uploading document...",
+            "user_id": user_id  # Store user_id in the job info
         }
         
         # Save the uploaded images
@@ -680,6 +736,33 @@ async def get_user_document(
     except Exception as e:
         logger.error(f"Error retrieving document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error retrieving document: {str(e)}")
+
+@api_router.get("/documents/id/{id_number}")
+async def get_document_by_id_number(
+    id_number: str,
+    include_embedding: bool = Query(False, description="Whether to include the embedding vector")
+):
+    """
+    Retrieve a document by ID number.
+    
+    This endpoint looks up a document based on its ID number (e.g., permit number or national ID)
+    instead of the document ID used for internal storage.
+    """
+    from database import ocr_store
+    
+    document = ocr_store.get_document_by_id_number(
+        id_number=id_number,
+        include_embedding=include_embedding
+    )
+    
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document with ID number {id_number} not found")
+    
+    # Convert ObjectId to string for JSON serialization
+    if "_id" in document:
+        document["_id"] = str(document["_id"])
+        
+    return document
 
 # Register the API router
 app.include_router(api_router)

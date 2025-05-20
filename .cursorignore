@@ -12,3 +12,5 @@ __pycache__/
 *.pyzq
 *.pyzr
 *.pyzs
+
+yolov9/

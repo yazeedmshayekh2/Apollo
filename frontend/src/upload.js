@@ -132,6 +132,17 @@ function setupFormSubmission() {
  */
 async function submitForm(formData) {
   try {
+    // Debug log all form data being sent to the API
+    console.log('Form data being sent to API:');
+    for (const [key, value] of formData.entries()) {
+      console.log(`${key}: ${value instanceof File ? value.name : value}`);
+    }
+    
+    // Always generate a random user ID since the field is no longer in the UI
+    const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    console.log(`Automatically generated user_id: ${userId}`);
+    formData.set('user_id', userId);
+    
     // In development, we'll simulate the API response if USE_SIMULATION is true
     if (USE_SIMULATION) {
       console.log('Simulation mode: simulating API response');
@@ -268,14 +279,28 @@ function updateStatusDisplay(jobStatus) {
       }
       break;
     case 'completed':
+      // Check if results were saved to MongoDB
+      const wasSavedToMongoDB = jobStatus.user_id && jobStatus.user_id.trim() !== '';
+      
+      if (wasSavedToMongoDB) {
+        updateStatusIndicator('success', 'Processing completed successfully and saved to MongoDB');
+      } else {
       updateStatusIndicator('success', 'Processing completed successfully');
+      }
       updateProgressBar(100);
       
       // Display the results
       displayResults(jobStatus);
       break;
     case 'completed_with_warnings':
+      // Check if results were saved to MongoDB
+      const savedWithWarnings = jobStatus.user_id && jobStatus.user_id.trim() !== '';
+      
+      if (savedWithWarnings) {
+        updateStatusIndicator('warning', 'Completed with some missing information and saved to MongoDB');
+      } else {
       updateStatusIndicator('warning', 'Completed with some missing information');
+      }
       updateProgressBar(100);
       
       // Display the results

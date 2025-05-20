@@ -21,7 +21,7 @@ class Config:
         "DEVICE_MAP": "auto",
         "MIN_PIXELS": 256 * 28 * 28,  # Minimum image resolution for tokens
         "MAX_PIXELS": 1280 * 28 * 28, # Maximum image resolution for tokens
-        "YOLO_MODEL": "yolov9_face_detection.pt",  # YOLO model for face detection
+        "YOLO_MODEL": "yolov9-face-detection.pt",  # YOLO model for face detection
         
         # Processing settings
         "VALIDATE_RESULTS": True,

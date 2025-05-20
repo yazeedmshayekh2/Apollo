@@ -69,3 +69,5 @@ secrets/
 
 *.h5
 *.pt
+
+yolov9/

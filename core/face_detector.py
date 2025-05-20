@@ -20,6 +20,7 @@ from pathlib import Path
 import time
 import tensorflow as tf
 from tensorflow import keras
+import sys
 
 from torchvision import models, transforms
 from ultralytics import YOLO
@@ -72,11 +73,12 @@ class FaceDetector:
             
             # Check if it's a YOLOv9 model (based on filename)
             if "yolov9" in model_name.lower():
-                # Use torch.hub for YOLOv9
+                # Simple approach just like in test.py
                 self.detection_model = torch.hub.load('./yolov9', 'custom', 
-                                                    path=model_name, 
-                                                    force_reload=True, 
-                                                    source='local')
+                                                     path=os.path.abspath(model_name), 
+                                                     force_reload=True, 
+                                                     source='local')
+                
                 self.detection_model.to(self.device)
                 logger.info(f"YOLOv9 model loaded successfully: {model_name}")
             else:

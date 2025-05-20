@@ -31,6 +31,8 @@ class OCRStore:
         self.collection.create_index("job_id")
         self.collection.create_index("document_type")
         self.collection.create_index([("extracted_text", "text")])  # Text index for search
+        # Add index for ID number in extracted_data
+        self.collection.create_index("extracted_data.personal_info.id_number")
         
     def save_ocr_data(
         self,
@@ -48,7 +50,7 @@ class OCRStore:
         
         Args:
             user_id: ID of the user who owns this document
-            document_id: Unique ID for the document
+            document_id: Unique ID for the document (preferably the ID number extracted from the document)
             extracted_data: Structured data extracted from OCR
             embedding: Optional embedding vector as numpy array
             document_type: Type of document (e.g., "id_card", "vehicle_registration")
@@ -60,6 +62,14 @@ class OCRStore:
             bool: Success status
         """
         try:
+            logger.info(f"Saving OCR data to MongoDB - user_id={user_id}, document_id={document_id}")
+            
+            # Check if document_id is likely to be an ID number
+            is_id_number = False
+            if document_id and user_id not in document_id and job_id not in document_id:
+                is_id_number = True
+                logger.info(f"Using document_id={document_id} as the ID number for database indexing")
+            
             if metadata is None:
                 metadata = {}
                 
@@ -264,4 +274,76 @@ class OCRStore:
         except Exception as e:
             logger.warning(f"Error extracting searchable text: {e}")
         
-        return " ".join(text_parts) 
+        return " ".join(text_parts)
+    
+    def get_document_by_id_number(
+        self, 
+        id_number: str,
+        include_embedding: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a document by ID number.
+        
+        Args:
+            id_number: ID number to retrieve
+            include_embedding: Whether to include the embedding
+            
+        Returns:
+            Dict or None: Document if found
+        """
+        try:
+            logger.info(f"Searching for document with ID number: {id_number}")
+            
+            # Define projection
+            projection = None
+            if not include_embedding:
+                projection = {"embedding": 0}
+            
+            # Try multiple document locations where ID number might be stored
+            # First try direct document_id match (preferred way based on our implementation)
+            doc = self.collection.find_one({"document_id": id_number}, projection)
+            
+            if doc:
+                logger.info(f"Found document with document_id={id_number}")
+                # Deserialize embedding if present and requested
+                if include_embedding and "embedding" in doc:
+                    doc["embedding"] = pickle.loads(doc["embedding"])
+                return doc
+            
+            # Next try personal_info
+            logger.info(f"Trying personal_info.id_number field lookup for {id_number}")
+            doc = self.collection.find_one({"extracted_data.personal_info.id_number": id_number}, projection)
+            
+            if doc:
+                logger.info(f"Found document with personal_info.id_number={id_number}")
+                # Deserialize embedding if present and requested
+                if include_embedding and "embedding" in doc:
+                    doc["embedding"] = pickle.loads(doc["embedding"])
+                return doc
+                
+            # Try other common places for ID number
+            possible_paths = [
+                "extracted_data.document_info.id_number",
+                "extracted_data.document_info.document_number",
+                "extracted_data.identification.id_number",
+                "extracted_data.identification.number",
+                "extracted_data.id.number",
+                "extracted_data.permit.number"
+            ]
+            
+            for path in possible_paths:
+                logger.debug(f"Trying {path} field lookup for {id_number}")
+                doc = self.collection.find_one({path: id_number}, projection)
+                if doc:
+                    logger.info(f"Found document with {path}={id_number}")
+                    # Deserialize embedding if present and requested
+                    if include_embedding and "embedding" in doc:
+                        doc["embedding"] = pickle.loads(doc["embedding"])
+                    return doc
+            
+            logger.warning(f"No document found with ID number {id_number}")
+            return None
+            
+        except PyMongoError as e:
+            logger.error(f"Error retrieving document by ID number: {e}")
+            return None 
