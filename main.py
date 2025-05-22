@@ -1,76 +1,163 @@
-#!/usr/bin/env python3
-"""
-Document OCR System
-Based on Qwen 2.5 Vision Language Model
-
-This application provides a FastAPI server for processing various document types
-including vehicle registration cards and ID cards, extracting structured information
-using the Qwen 2.5 Vision model.
-"""
-
-import os
-import argparse
-import logging
 import uvicorn
-from typing import Dict, Any
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+import os
+from typing import Optional
+import json
+import pandas as pd
+from pathlib import Path
 
-# Set CUDA memory management configuration to avoid fragmentation
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+from ocr.document_detector import detect_document_type
+from ocr.processor import process_document, process_both_sides
 
-from api.routes import app
-from utils.config import Config
+# Create directories if they don't exist
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("static", exist_ok=True)
+os.makedirs("templates", exist_ok=True)
 
-# Configure logging
-logging.basicConfig(
-    level=Config.get("LOG_LEVEL", "INFO"),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+app = FastAPI(title="Qatar Document OCR")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-logger = logging.getLogger(__name__)
 
-def main():
-    """Main entry point for the OCR API server."""
-    parser = argparse.ArgumentParser(description='Document OCR API Server')
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+@app.get("/")
+async def get_index():
+    return FileResponse("templates/index.html")
+
+@app.post("/api/detect-document")
+async def detect_document(file: UploadFile = File(...)):
+    """
+    Detect document type from uploaded image
+    """
+    # Save uploaded file temporarily
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
     
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind the server to')
-    parser.add_argument('--port', type=int, default=8000, help='Port to bind the server to')
-    parser.add_argument('--reload', action='store_true', help='Enable auto-reload for development')
-    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
-    parser.add_argument('--workers', type=int, default=1, help='Number of worker processes')
+    # Detect document type
+    doc_type, side = detect_document_type(file_path)
     
-    args = parser.parse_args()
+    return {"documentType": doc_type, "side": side, "filePath": file_path}
+
+@app.post("/api/process-document")
+async def process_document_api(
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+    side: str = Form(...),
+    output_format: str = Form("json")
+):
+    """
+    Process document with OCR based on detected type and side
+    """
+    # Save uploaded file temporarily
+    file_path = f"uploads/{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
     
-    # Set up storage directories
-    os.makedirs(Config.get("LOCAL_STORAGE_PATH", "storage"), exist_ok=True)
-    os.makedirs(Config.get("DEFAULT_OUTPUT_DIR", "output"), exist_ok=True)
+    # Process document
+    result = process_document(file_path, document_type, side)
     
-    # Print startup banner
-    print("\n========================================")
-    print(" Document OCR API Server")
-    print("========================================")
-    print(f" Host: {args.host}")
-    print(f" Port: {args.port}")
-    print(f" Debug: {'Enabled' if args.debug else 'Disabled'}")
-    print(f" Auto-reload: {'Enabled' if args.reload else 'Disabled'}")
-    print(f" Workers: {args.workers}")
-    print("========================================\n")
+    # Return result in requested format
+    if output_format == "csv":
+        # Convert result to CSV
+        df = pd.DataFrame([result])
+        csv_path = f"uploads/{os.path.splitext(file.filename)[0]}.csv"
+        df.to_csv(csv_path, index=False)
+        return FileResponse(csv_path, media_type="text/csv", filename=f"{document_type}_{side}.csv")
+    else:
+        return JSONResponse(content=result)
+
+@app.post("/api/process-document-both-sides")
+async def process_document_both_sides_api(
+    front_file: UploadFile = File(...),
+    back_file: UploadFile = File(...),
+    document_type: str = Form(...),
+    output_format: str = Form("json")
+):
+    """
+    Process both sides of a document and combine the results
+    """
+    # Save uploaded files temporarily
+    front_path = f"uploads/front_{front_file.filename}"
+    back_path = f"uploads/back_{back_file.filename}"
     
-    try:
-        # Start the FastAPI server
-        uvicorn.run(
-            "api.routes:app",
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            workers=args.workers,
-            log_level=Config.get("LOG_LEVEL", "info").lower()
+    with open(front_path, "wb") as f:
+        f.write(await front_file.read())
+    
+    with open(back_path, "wb") as f:
+        f.write(await back_file.read())
+    
+    # Verify that both images are of the same document type and correct sides
+    front_detected_type, front_detected_side = detect_document_type(front_path)
+    back_detected_type, back_detected_side = detect_document_type(back_path)
+    
+    # Check for potential errors
+    errors = []
+    
+    # 1. Check if documents are of different types
+    if front_detected_type != back_detected_type and front_detected_type != "unknown" and back_detected_type != "unknown":
+        errors.append(f"The uploaded images appear to be different document types: Front is {front_detected_type}, Back is {back_detected_type}")
+    
+    # 2. Check if the sides are correctly provided
+    if front_detected_side == "back" and back_detected_side == "front":
+        errors.append("The images appear to be in the wrong order. The front image looks like a back side, and the back image looks like a front side.")
+    
+    # 3. Check if specified document type matches detected type
+    if front_detected_type != "unknown" and front_detected_type != document_type:
+        errors.append(f"The detected document type ({front_detected_type}) doesn't match the selected type ({document_type})")
+    
+    # 4. Provide a helpful message if both document detection and side detection failed
+    if front_detected_type == "unknown" and back_detected_type == "unknown":
+        errors.append("Could not automatically identify the document types. Please make sure the images are clear and contain the expected document information.")
+    
+    # Return errors if any were found
+    if errors:
+        return JSONResponse(
+            status_code=400,
+            content={"errors": errors}
         )
-        return 0
+    
+    # If all validations pass, process both sides using our unified processing
+    combined_result = process_both_sides(front_path, back_path, document_type)
+    
+    # Return result in requested format
+    if output_format == "csv":
+        # Flatten the nested structure for CSV
+        flat_result = {}
         
-    except Exception as e:
-        logger.error(f"Error starting server: {e}", exc_info=True)
-        print(f"Error: {e}")
-        return 1
+        # Function to recursively flatten nested dictionaries
+        def flatten_dict(nested_dict, prefix=""):
+            for key, value in nested_dict.items():
+                if isinstance(value, dict):
+                    # Recursively flatten nested dictionaries
+                    flatten_dict(value, prefix + key + "_")
+                else:
+                    # Add leaf values to the flat result
+                    flat_result[prefix + key] = value
+        
+        # Flatten the combined result
+        flatten_dict(combined_result)
+        
+        # Convert to CSV
+        df = pd.DataFrame([flat_result])
+        csv_path = f"uploads/{document_type}_complete.csv"
+        df.to_csv(csv_path, index=False)
+        return FileResponse(csv_path, media_type="text/csv", filename=f"{document_type}_complete.csv")
+    else:
+        return JSONResponse(content=combined_result)
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

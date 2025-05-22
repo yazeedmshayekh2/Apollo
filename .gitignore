@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
 build/
 develop-eggs/
 dist/
@@ -15,57 +16,38 @@ lib64/
 parts/
 sdist/
 var/
-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-mongodb-compass*.deb
-
-# Virtual Environment
 venv/
-ENV/
-env/
 
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
-.DS_Store
+# Uploads and output
+uploads/*
+!uploads/.gitkeep
+sample_images/*
+!sample_images/.gitkeep
 
-# Project specific
-.env
-output/
-model_cache/
+# Logs
+*.log
+logs/
+
+# Model files and cache
 *.pt
 *.pth
-*.onnx
+*.model
 *.bin
-*.log
-ngrok.log
-mongodb-compass*.deb
+*.safetensors
+.cache/
+models/
+__pycache__/
+.pytest_cache/
+huggingface_hub/
 
-# Generated documentation & API files
-api_docs.json
-OCR_API_DOCUMENTATION.md
-ocr_api_postman.json
+# Development
+.env
+.venv
+.vscode/
+.idea/
 
-# Sample data & test results
-sample_data/**/*.json
-sample_data/**/*.txt
-
-# Docker
-.dockerignore
-
-# Large files
-*.tar.gz
-*.zip
-*.rar
-
-# Sensitive data
-secrets/
-*_credentials.json
-*_secret.json
-
-*.h5
-*.pt
+# OS files
+.DS_Store 

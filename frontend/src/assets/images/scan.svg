@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <defs>
-    <linearGradient id="scanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a73e8;stop-opacity:0.8" />
-      <stop offset="100%" style="stop-color:#1a73e8;stop-opacity:0.3" />
-    </linearGradient>
-  </defs>
-  <path d="M4.5,7.5L9,4.5L5.5,1.5L4.5,2L5.5,3.5L7.5,2L6,9L7.5,12L10,10L9,14L4.5,7.5M14,4V2H9V4H14M21,6V2H16V6H21M6,15V13H1V15H6M14,13V11H9V13H14M15,15V13H20V15H15M14,18V16H9V18H14M19,20V16H15V20H19M6,20V16H1V20H6Z" fill="url(#scanGrad)"/>
-</svg> 

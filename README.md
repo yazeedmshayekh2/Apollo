@@ -1,255 +1,100 @@
-# Document OCR System with MongoDB & API Sharing
+# Qatar Document OCR
 
-An advanced OCR system built on Qwen 2.5 Vision Language Model to extract structured information from documents like vehicle registration cards and ID cards, with MongoDB storage and API sharing capabilities.
+A Python application for extracting information from Qatar residency permits (iqama) and vehicle registration cards using the Qwen2.5-VL-7B-Instruct-AWQ vision-language model.
 
 ## Features
 
-- **High-Accuracy OCR**: Leverages Qwen 2.5 Vision model for superior text recognition performance
-- **Multi-Document Support**: Processes vehicle registration cards and ID cards
-- **Multi-Side Processing**: Handles both front and back sides of documents
-- **Structured Data Extraction**: Outputs standardized JSON with document-specific fields
-- **MongoDB Integration**: Stores extracted data and embeddings for future retrieval
-- **Vector Embeddings**: Creates embeddings for similarity search and document comparison
-- **API Sharing**: Easily expose your API to others via ngrok for testing and collaboration
-- **User-Based Storage**: Associates documents with user IDs for organization
-- **REST API**: Complete API for document upload, processing and retrieval
-- **Web Interface**: Simple web UI for document upload and result viewing
+- Automatic detection of document type (residency permit or vehicle registration)
+- Process both front and back sides of documents simultaneously
+- Intelligent validation and correction for incorrectly ordered/mismatched documents
+- Unified document processing that combines information from both sides
+- Specialized prompts for each document type and side
+- Structured data output in both JSON and CSV formats
+- User-friendly web interface with document preview
 
-## System Architecture
+## Important Notes
 
-```
-OCR System
-│
-├── API Layer
-│   ├── Upload Service
-│   ├── Validation Service
-│   ├── REST Endpoints
-│   ├── Ngrok Integration
-│   └── Webhook Support
-│
-├── Core OCR Engine
-│   ├── Qwen Vision Service
-│   ├── Image Processor
-│   ├── Data Extractor
-│   ├── Document Type Detector
-│   └── Model Registry
-│
-├── Database Layer
-│   ├── MongoDB Connector
-│   ├── OCR Data Store
-│   ├── Image Metadata Store
-│   ├── Vector Embeddings
-│   └── Audit Logging
-│
-├── Frontend Layer
-│   ├── Upload Interface
-│   ├── Result Visualization
-│   ├── Status Tracking
-│   └── Document Management
-│
-└── Utilities
-    ├── Configuration
-    ├── Helpers
-    ├── Validators
-    └── Image Processing
-```
+- This project uses the quantized AWQ version of Qwen2.5-VL which requires specific package versions
+- We use `torch.float16` for consistent dtype to avoid precision mismatches
+- The model requires approximately 8GB of VRAM to run efficiently
+- First-time loading will download the model weights (~5GB)
+
+## Prerequisites
+
+- Python 3.8+
+- PyTorch
+- CUDA-compatible GPU (recommended for faster processing)
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8+
-- CUDA 11.8+ (for GPU acceleration)
-- 16GB+ RAM (32GB+ recommended for production)
-- MongoDB (local or remote instance)
-
-### Setup
-
 1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/document-ocr-mongodb.git
-   cd document-ocr-mongodb
-   ```
 
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+git clone https://github.com/yourusername/qatar-document-ocr.git
+cd qatar-document-ocr
+```
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. Create a virtual environment and activate it:
 
-4. Configure MongoDB connection (in .env file or environment variables):
-   ```
-   MONGODB_URI=mongodb://localhost:27017
-   MONGODB_DB=ocr_db
-   ```
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install the required packages:
+
+```bash
+pip install -r requirements.txt
+```
 
 ## Usage
 
-### Running the API Server
-
-Start the API server locally:
+1. Start the application:
 
 ```bash
-python -m uvicorn api.routes:app --host 0.0.0.0 --port 8000
+python main.py
 ```
 
-Access the web interface at: http://localhost:8000/
+2. Open your browser and navigate to `http://localhost:8000`.
 
-### Sharing the API with Others
+3. Upload both front and back images of your document (Qatar residency permit or vehicle registration card).
 
-To expose your API via ngrok for others to test:
+4. Choose whether to auto-detect the document type or manually select it.
+
+5. Submit the form to process both sides of the document together.
+
+6. If the images are incorrectly ordered (front/back swapped), the system will detect this and offer to correct it.
+
+7. View the combined, structured results and download them in JSON or CSV format.
+
+### Command Line Testing
+
+You can also test document processing from the command line:
 
 ```bash
-python ngrok_server.py
+python test_model.py path/to/document_image.jpg
 ```
 
-This will:
-1. Start the API server locally
-2. Create a secure public URL via ngrok
-3. Generate comprehensive API documentation
-4. Create a Postman collection for easy testing
+## API Endpoints
 
-Share the generated URL and documentation with your collaborators.
+The application provides the following API endpoints:
 
-### Using the API
+- `POST /api/detect-document`: Detect the document type and side from an uploaded image.
+- `POST /api/process-document`: Process a single document side and extract information.
+- `POST /api/process-document-both-sides`: Process both front and back sides of a document in a single request and return combined, structured data.
 
-#### Process a Document
+## Document Types Supported
 
-```bash
-curl -X POST "http://localhost:8000/api/process" \
-  -F "front=@path/to/front_image.jpg" \
-  -F "back=@path/to/back_image.jpg" \
-  -F "user_id=user123" \
-  -F "output_format=json"
-```
+1. Qatar Residency Permit (Iqama)
+   - Front side: Extracts document info, ID number, full name (in English and Arabic), date of birth, nationality, occupation, and expiry date.
+   - Back side: Extracts passport details, residency type, employer information, and other additional data.
+   - Combined: Creates a comprehensive personal record with all extracted information organized into logical sections.
 
-#### Check Job Status
-
-```bash
-curl "http://localhost:8000/api/jobs/{job_id}"
-```
-
-#### Get User Documents
-
-```bash
-curl "http://localhost:8000/api/users/{user_id}/documents"
-```
-
-### Python Client Integration
-
-```python
-import requests
-
-# Process a document
-files = {
-    'front': ('front.jpg', open('path/to/front.jpg', 'rb'), 'image/jpeg'),
-    'back': ('back.jpg', open('path/to/back.jpg', 'rb'), 'image/jpeg')
-}
-data = {
-    'user_id': 'user123',
-    'output_format': 'json'
-}
-response = requests.post('http://localhost:8000/api/process', files=files, data=data)
-job_id = response.json()['job_id']
-
-# Check job status
-response = requests.get(f'http://localhost:8000/api/jobs/{job_id}')
-result = response.json()
-
-# Get user documents
-response = requests.get(f'http://localhost:8000/api/users/user123/documents')
-documents = response.json()['documents']
-```
-
-## MongoDB Data Structure
-
-The system uses the following collections in MongoDB:
-
-- **users**: Basic user information
-- **ocr_data**: Main collection for OCR results with embeddings
-- **images**: Metadata about processed images
-- **audit_log**: Operation tracking
-
-Document structure example in `ocr_data`:
-
-```json
-{
-  "user_id": "user123",
-  "document_id": "user123_job456",
-  "job_id": "job456",
-  "document_type": "vehicle_registration",
-  "extracted_data": {
-    "vehicle_info": { ... },
-    "owner_info": { ... },
-    "registration_info": { ... }
-  },
-  "embedding": "<Binary data>",
-  "embedding_dim": 100,
-  "raw_text": "...",
-  "created_at": "2023-10-15T14:30:00.000Z",
-  "metadata": { ... }
-}
-```
-
-## API Documentation
-
-Full API documentation is available at `/docs` when the server is running.
-
-When using the ngrok sharing feature, comprehensive documentation is automatically generated:
-- `OCR_API_DOCUMENTATION.md`: API documentation in Markdown format
-- `ocr_api_postman.json`: Ready-to-import Postman collection
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Testing the API directly
-
-```bash
-python test_api_endpoint.py
-```
-
-### Testing with MongoDB
-
-```bash
-python test_ocr_with_mongodb.py
-```
-
-## Docker Deployment
-
-Build and run with Docker:
-
-```bash
-docker build -t document-ocr-mongodb .
-docker run -p 8000:8000 \
-  -e MONGODB_URI=mongodb://host.docker.internal:27017 \
-  -v $(pwd)/sample_data:/app/sample_data \
-  document-ocr-mongodb
-```
-
-## Model Information
-
-This system uses the Qwen 2.5 Vision Language Model:
-
-- **Model**: Qwen2.5-VL-7B-Instruct
-- **Size**: 7 billion parameters
-- **Context Window**: Supports up to 16K tokens
-- **Visual Tokens**: 4-16384 tokens per image
-- **Multimodal Understanding**: Processes both text and images together
+2. Vehicle Registration
+   - Front side: Extracts plate number, owner details, registration dates, and vehicle identification.
+   - Back side: Extracts vehicle specifications (make, model, year, etc.), technical details (chassis/engine numbers), and insurance information.
+   - Combined: Creates a complete vehicle record with owner, registration, vehicle, and insurance information in a structured format.
 
 ## License
 
-[MIT License](LICENSE)
-
-## Contributors
-
-- Your Name - Initial work
+MIT 
