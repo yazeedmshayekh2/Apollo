@@ -19,3 +19,6 @@ pymongo
 numpy
 seaborn
 matplotlib
+tensorflow
+deepfae
+deepface
