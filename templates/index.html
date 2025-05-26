@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qatar Document OCR</title>
+    <title>Qatar Document OCR with Face Verification</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .document-preview {
@@ -29,16 +29,31 @@
             border-radius: 5px;
             white-space: pre-wrap;
         }
+        .face-verification-status {
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        .face-detected {
+            background-color: #d1f2eb;
+            border-color: #28a745;
+        }
+        .face-not-detected {
+            background-color: #f8d7da;
+            border-color: #dc3545;
+        }
     </style>
 </head>
 <body>
     <div class="container mt-5">
         <div class="row">
             <div class="col-12">
-                <h1 class="mb-4">Qatar Document OCR</h1>
+                <h1 class="mb-4">Qatar Document OCR with Face Verification</h1>
                 <div class="card">
                     <div class="card-header">
-                        <h5>Upload Document (Front & Back) for OCR</h5>
+                        <h5>Upload Document for OCR + Face Verification</h5>
+                        <small class="text-muted">Process documents with automatic face detection and verification</small>
                     </div>
                     <div class="card-body">
                         <div id="validationAlert" class="alert alert-warning alert-dismissible fade show" role="alert" style="display: none;">
@@ -74,21 +89,16 @@
                             <div class="mb-3">
                                 <label for="frontImage" class="form-label">Front Side Image</label>
                                 <input type="file" class="form-control" id="frontImage" accept="image/*" required>
+                                <small class="text-muted">Make sure the face is clearly visible for face verification</small>
                             </div>
                             <div class="mb-3">
-                                <label for="backImage" class="form-label">Back Side Image</label>
-                                <input type="file" class="form-control" id="backImage" accept="image/*" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="outputFormat" class="form-label">Output Format</label>
-                                <select class="form-select" id="outputFormat">
-                                    <option value="json">JSON</option>
-                                    <option value="csv">CSV</option>
-                                </select>
+                                <label for="backImage" class="form-label">Back Side Image (Optional)</label>
+                                <input type="file" class="form-control" id="backImage" accept="image/*">
+                                <small class="text-muted">Back side is optional for face verification</small>
                             </div>
                             <button type="submit" class="btn btn-primary">
                                 <span class="spinner-border spinner-border-sm" id="processSpinner" role="status" aria-hidden="true"></span>
-                                <span id="processButtonText">Process Document</span>
+                                <span id="processButtonText">Process Document & Extract Face</span>
                             </button>
                         </form>
                     </div>
@@ -118,29 +128,122 @@
                     </div>
                     <div class="col-md-6">
                         <div class="card">
-                                            <div class="card-header">
-                    <div class="d-flex justify-content-between">
-                        <h5>Combined OCR Result</h5>
-                        <button id="downloadButton" class="btn btn-sm btn-outline-secondary" style="display: none;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16">
-                                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
-                            </svg>
-                            Download
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="resultInfo" style="display: none;">
-                        <div class="mb-2">
-                            <strong>Document Type:</strong> <span id="detectedDocType"></span>
-                        </div>
-                        <div class="mb-3">
-                            <strong>Processing:</strong> <span id="detectedDocSide"></span>
-                        </div>
-                    </div>
+                            <div class="card-header">
+                                <div class="d-flex justify-content-between">
+                                    <h5>Processing Results</h5>
+                                    <button id="downloadButton" class="btn btn-sm btn-outline-secondary" style="display: none;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16">
+                                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                                        </svg>
+                                        Download
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div id="resultInfo" style="display: none;">
+                                    <div class="mb-2">
+                                        <strong>Document Type:</strong> <span id="detectedDocType"></span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Person ID:</strong> <span id="personId"></span>
+                                    </div>
+                                    <div class="mb-3">
+                                        <strong>Processing:</strong> <span id="detectedDocSide"></span>
+                                    </div>
+                                    
+                                    <!-- Face Verification Status -->
+                                    <div id="faceVerificationStatus" class="face-verification-status" style="display: none;">
+                                        <h6><i class="bi bi-person-check"></i> Face Verification</h6>
+                                        <div class="row">
+                                            <div class="col-6">
+                                                <small><strong>Face Detected:</strong> <span id="faceDetected"></span></small>
+                                            </div>
+                                            <div class="col-6">
+                                                <small><strong>Features Extracted:</strong> <span id="featuresExtracted"></span></small>
+                                            </div>
+                                        </div>
+                                        <div class="row mt-1">
+                                            <div class="col-12">
+                                                <small><strong>Method:</strong> <span id="embeddingMethod"></span></small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                                 <pre id="resultContent" style="display: none;"></pre>
                                 <p id="noResultText">No document processed yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Face Verification Section -->
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>🔍 Face Verification Test</h5>
+                                <small class="text-muted">Verify a person's identity by comparing a test image against stored face embeddings</small>
+                            </div>
+                            <div class="card-body">
+                                <div id="verificationAlert" class="alert alert-info alert-dismissible fade show" role="alert" style="display: none;">
+                                    <span id="verificationMessage"></span>
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                                
+                                <form id="verificationForm">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="testPersonId" class="form-label">Person ID</label>
+                                                <input type="text" class="form-control" id="testPersonId" placeholder="Enter Person ID (from processing above)" required>
+                                                <small class="text-muted">Use the Person ID from the document processing above</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="testImage" class="form-label">Test Image</label>
+                                                <input type="file" class="form-control" id="testImage" accept="image/*" required>
+                                                <small class="text-muted">Upload an image to verify against the stored person</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="text-center">
+                                                <h6>Test Image Preview</h6>
+                                                <img id="testImagePreview" class="document-preview" style="display: none;" />
+                                                <p id="noTestImageText">No test image selected</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div id="verificationResult" style="display: none;">
+                                                <h6>Verification Result</h6>
+                                                <div id="verificationDetails" class="face-verification-status">
+                                                    <div class="row">
+                                                        <div class="col-6">
+                                                            <small><strong>Match:</strong> <span id="verificationMatch"></span></small>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <small><strong>Similarity:</strong> <span id="verificationSimilarity"></span></small>
+                                                        </div>
+                                                    </div>
+                                                    <div class="row mt-1">
+                                                        <div class="col-12">
+                                                            <small><strong>Confidence:</strong> <span id="verificationConfidence"></span></small>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-success">
+                                        <span class="spinner-border spinner-border-sm" id="verifySpinner" role="status" aria-hidden="true" style="display: none;"></span>
+                                        <span id="verifyButtonText">Verify Identity</span>
+                                    </button>
+                                </form>
                             </div>
                         </div>
                     </div>
@@ -163,6 +266,7 @@
             const resultInfo = document.getElementById('resultInfo');
             const detectedDocType = document.getElementById('detectedDocType');
             const detectedDocSide = document.getElementById('detectedDocSide');
+            const personId = document.getElementById('personId');
             const downloadButton = document.getElementById('downloadButton');
             const processSpinner = document.getElementById('processSpinner');
             const processButtonText = document.getElementById('processButtonText');
@@ -172,6 +276,28 @@
             const manualSelectionOptions = document.getElementById('manualSelectionOptions');
             const validationAlert = document.getElementById('validationAlert');
             const validationMessage = document.getElementById('validationMessage');
+            
+            // Face verification elements
+            const faceVerificationStatus = document.getElementById('faceVerificationStatus');
+            const faceDetected = document.getElementById('faceDetected');
+            const featuresExtracted = document.getElementById('featuresExtracted');
+            const embeddingMethod = document.getElementById('embeddingMethod');
+            
+            // Verification form elements
+            const verificationForm = document.getElementById('verificationForm');
+            const testPersonId = document.getElementById('testPersonId');
+            const testImage = document.getElementById('testImage');
+            const testImagePreview = document.getElementById('testImagePreview');
+            const noTestImageText = document.getElementById('noTestImageText');
+            const verificationAlert = document.getElementById('verificationAlert');
+            const verificationMessage = document.getElementById('verificationMessage');
+            const verificationResult = document.getElementById('verificationResult');
+            const verificationDetails = document.getElementById('verificationDetails');
+            const verificationMatch = document.getElementById('verificationMatch');
+            const verificationSimilarity = document.getElementById('verificationSimilarity');
+            const verificationConfidence = document.getElementById('verificationConfidence');
+            const verifySpinner = document.getElementById('verifySpinner');
+            const verifyButtonText = document.getElementById('verifyButtonText');
             
             // Handle manual vs auto detection toggle
             autoDetect.addEventListener('change', function() {
@@ -234,9 +360,8 @@
                 hideValidationAlert();
                 
                 const frontFile = frontImage.files[0];
-                const backFile = backImage.files[0];
-                if (!frontFile || !backFile) {
-                    alert('Please select both front and back images!');
+                if (!frontFile) {
+                    alert('Please select at least the front image!');
                     return;
                 }
                 
@@ -246,7 +371,6 @@
                 
                 try {
                     let docType;
-                    const outputFormat = document.getElementById('outputFormat').value;
                     
                     // Determine whether to auto-detect or use manual selection
                     if (autoDetect.checked) {
@@ -274,165 +398,46 @@
                             manualSelect.checked = true;
                             manualSelectionOptions.style.display = 'block';
                             processSpinner.style.display = 'none';
-                            processButtonText.textContent = 'Process Document';
+                            processButtonText.textContent = 'Process Document & Extract Face';
                             return;
                         }
                         
                         // Update status
-                        processButtonText.textContent = `Processing ${docType}...`;
+                        processButtonText.textContent = `Processing ${docType} + extracting face...`;
                     } else {
                         docType = documentType.value;
+                        processButtonText.textContent = 'Processing document + extracting face...';
                     }
                     
-                    // Create formData for processing both sides
+                    // Create formData for the new integrated processing endpoint
                     const formData = new FormData();
                     formData.append('front_file', frontFile);
-                    formData.append('back_file', backFile);
+                    if (backImage.files[0]) {
+                        formData.append('back_file', backImage.files[0]);
+                    }
                     formData.append('document_type', docType);
-                    formData.append('output_format', outputFormat);
                     
-                    // Process both sides together
-                    const response = await fetch('/api/process-document-both-sides', {
+                    // Use the new integrated endpoint that includes face verification and MongoDB storage
+                    const response = await fetch('/api/process-document-with-face', {
                         method: 'POST',
                         body: formData
                     });
                     
                     if (!response.ok) {
-                        // Check if it's a validation error with specific message
-                        if (response.status === 400) {
-                            const errorData = await response.json();
-                            if (errorData.errors && errorData.errors.length > 0) {
-                                // Check for wrong order error which we can auto-correct
-                                const wrongOrderError = errorData.errors.find(err => 
-                                    err.includes("wrong order") || 
-                                    (err.includes("front") && err.includes("back"))
-                                );
-                                
-                                if (wrongOrderError) {
-                                    // Offer to auto-swap the images
-                                    const swapConfirm = confirm(
-                                        "The images appear to be in the wrong order (front/back swapped). "+
-                                        "Would you like to automatically swap them and continue processing?"
-                                    );
-                                    
-                                    if (swapConfirm) {
-                                        // Swap the files in the FormData
-                                        formData.delete('front_file');
-                                        formData.delete('back_file');
-                                        formData.append('front_file', backFile);
-                                        formData.append('back_file', frontFile);
-                                        
-                                        // Try again with swapped files
-                                        const retryResponse = await fetch('/api/process-document-both-sides', {
-                                            method: 'POST',
-                                            body: formData
-                                        });
-                                        
-                                        if (retryResponse.ok) {
-                                            // Continue with standard processing
-                                            if (outputFormat === 'json') {
-                                                const result = await retryResponse.json();
-                                                resultContent.textContent = JSON.stringify(result, null, 2);
-                                                resultContent.style.display = 'block';
-                                                
-                                                // Display document info
-                                                detectedDocType.textContent = docType.charAt(0).toUpperCase() + docType.slice(1);
-                                                detectedDocSide.textContent = 'Front & Back (Auto-corrected)';
-                                                resultInfo.style.display = 'block';
-                                                noResultText.style.display = 'none';
-                                                
-                                                // Setup download button
-                                                setupDownloadButton(result, docType);
-                                            } else {
-                                                handleCsvResponse(await retryResponse.blob(), docType, 'Front & Back (Auto-corrected)');
-                                            }
-                                            return;
-                                        }
-                                    }
-                                }
-                                
-                                // Display validation errors in the alert
-                                const errorMessages = errorData.errors.join('<br><br>');
-                                validationMessage.innerHTML = errorMessages;
-                                validationAlert.style.display = 'block';
-                                
-                                // Scroll to the alert
-                                validationAlert.scrollIntoView({ behavior: 'smooth' });
-                                return;
-                            }
-                        }
-                        throw new Error('Failed to process document');
+                        throw new Error(`Server error: ${response.status}`);
                     }
                     
-                    // Handle different output formats
-                    if (outputFormat === 'json') {
-                        const result = await response.json();
-                        displayJsonResult(result, docType, 'Front & Back');
-                    } else if (outputFormat === 'csv') {
-                        // For CSV, we'll get a file download
-                        const blob = await response.blob();
-                        handleCsvResponse(blob, docType, 'Front & Back');
-                    }
+                    const result = await response.json();
                     
-                    // Helper function to display JSON result
-                    function displayJsonResult(result, docType, sideText) {
-                        resultContent.textContent = JSON.stringify(result, null, 2);
-                        resultContent.style.display = 'block';
-                        
-                        // Display document info
-                        detectedDocType.textContent = docType.charAt(0).toUpperCase() + docType.slice(1);
-                        detectedDocSide.textContent = sideText;
-                        resultInfo.style.display = 'block';
-                        noResultText.style.display = 'none';
-                        
-                        // Setup download button
-                        setupDownloadButton(result, docType);
-                    }
-                    
-                    // Helper function to setup download button for JSON
-                    function setupDownloadButton(result, docType) {
-                        downloadButton.style.display = 'block';
-                        downloadButton.onclick = function() {
-                            const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `${docType}_complete.json`;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                        };
-                    }
-                    
-                    // Helper function to handle CSV response
-                    function handleCsvResponse(blob, docType, sideText) {
-                        const url = URL.createObjectURL(blob);
-                        
-                        // Extract text to display in UI
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            resultContent.textContent = e.target.result;
-                            resultContent.style.display = 'block';
-                            noResultText.style.display = 'none';
-                            
-                            // Display document info
-                            detectedDocType.textContent = docType.charAt(0).toUpperCase() + docType.slice(1);
-                            detectedDocSide.textContent = sideText;
-                            resultInfo.style.display = 'block';
-                        };
-                        reader.readAsText(blob);
-                        
-                        // Auto download
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `${docType}_complete.csv`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        
-                        downloadButton.style.display = 'none';
+                    if (result.success) {
+                        // Display the results
+                        displayIntegratedResult(result, docType);
+                    } else {
+                        // Display error message
+                        const errorMsg = result.message || 'Unknown error occurred';
+                        validationMessage.innerHTML = `Processing failed: ${errorMsg}`;
+                        validationAlert.style.display = 'block';
+                        validationAlert.scrollIntoView({ behavior: 'smooth' });
                     }
                     
                 } catch (error) {
@@ -441,9 +446,198 @@
                 } finally {
                     // Hide spinner
                     processSpinner.style.display = 'none';
-                    processButtonText.textContent = 'Process Document';
+                    processButtonText.textContent = 'Process Document & Extract Face';
                 }
             });
+            
+            // Function to display integrated result with face verification
+            function displayIntegratedResult(result, docType) {
+                // Display OCR results
+                resultContent.textContent = JSON.stringify(result.ocr_result, null, 2);
+                resultContent.style.display = 'block';
+                noResultText.style.display = 'none';
+                
+                // Display document info
+                detectedDocType.textContent = docType.charAt(0).toUpperCase() + docType.slice(1);
+                personId.textContent = result.person_id;
+                
+                // Determine processing type
+                const hasBackImage = backImage.files[0] !== undefined;
+                detectedDocSide.textContent = hasBackImage ? 'Front & Back + Face Verification' : 'Front + Face Verification';
+                
+                resultInfo.style.display = 'block';
+                
+                // Display face verification status
+                const faceVerification = result.face_verification;
+                if (faceVerification) {
+                    faceDetected.textContent = faceVerification.face_detected ? '✅ Yes' : '❌ No';
+                    featuresExtracted.textContent = faceVerification.features_extracted ? '✅ Yes' : '❌ No';
+                    embeddingMethod.textContent = faceVerification.embedding_method || 'N/A';
+                    
+                    // Set status color based on success
+                    if (faceVerification.face_detected && faceVerification.features_extracted) {
+                        faceVerificationStatus.className = 'face-verification-status face-detected';
+                    } else {
+                        faceVerificationStatus.className = 'face-verification-status face-not-detected';
+                    }
+                    
+                    faceVerificationStatus.style.display = 'block';
+                }
+                
+                // Setup download button
+                setupDownloadButton(result, docType);
+                
+                // Auto-fill Person ID in verification form
+                autoFillPersonId(result.person_id);
+            }
+            
+            // Helper function to setup download button for JSON
+            function setupDownloadButton(result, docType) {
+                downloadButton.style.display = 'block';
+                downloadButton.onclick = function() {
+                    const downloadData = {
+                        person_id: result.person_id,
+                        ocr_result: result.ocr_result,
+                        face_verification: result.face_verification,
+                        processing_timestamp: new Date().toISOString()
+                    };
+                    
+                    const blob = new Blob([JSON.stringify(downloadData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${docType}_with_face_${result.person_id}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                };
+            }
+            
+            // Show test image preview when file is selected
+            testImage.addEventListener('change', function() {
+                const file = this.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        testImagePreview.src = e.target.result;
+                        testImagePreview.style.display = 'block';
+                        noTestImageText.style.display = 'none';
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    testImagePreview.style.display = 'none';
+                    noTestImageText.style.display = 'block';
+                }
+            });
+            
+            // Auto-fill Person ID when document is processed
+            function autoFillPersonId(personId) {
+                testPersonId.value = personId;
+            }
+            
+            // Handle verification form submission
+            verificationForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const personIdValue = testPersonId.value.trim();
+                const testImageFile = testImage.files[0];
+                
+                if (!personIdValue || !testImageFile) {
+                    alert('Please enter a Person ID and select a test image!');
+                    return;
+                }
+                
+                // Show spinner
+                verifySpinner.style.display = 'inline-block';
+                verifyButtonText.textContent = 'Verifying...';
+                verificationResult.style.display = 'none';
+                verificationAlert.style.display = 'none';
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('test_image', testImageFile);
+                    formData.append('person_id', personIdValue);
+                    
+                    const response = await fetch('/api/verify-person', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Server error: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        displayVerificationResult(result);
+                    } else {
+                        const errorMsg = result.message || 'Verification failed';
+                        verificationMessage.innerHTML = `❌ ${errorMsg}`;
+                        verificationAlert.className = 'alert alert-danger alert-dismissible fade show';
+                        verificationAlert.style.display = 'block';
+                    }
+                    
+                } catch (error) {
+                    console.error('Verification error:', error);
+                    verificationMessage.innerHTML = `❌ Error during verification: ${error.message}`;
+                    verificationAlert.className = 'alert alert-danger alert-dismissible fade show';
+                    verificationAlert.style.display = 'block';
+                } finally {
+                    verifySpinner.style.display = 'none';
+                    verifyButtonText.textContent = 'Verify Identity';
+                }
+            });
+            
+            // Function to display verification results
+            function displayVerificationResult(result) {
+                const verificationRes = result.verification_result;
+                const isMatch = verificationRes.is_match;
+                const similarityScore = verificationRes.similarity_score;
+                const threshold = verificationRes.threshold;
+                
+                // Display match result
+                verificationMatch.innerHTML = isMatch ? '✅ MATCH' : '❌ NO MATCH';
+                verificationSimilarity.textContent = `${(similarityScore * 100).toFixed(1)}%`;
+                
+                // Determine confidence level
+                let confidence = '';
+                if (isMatch) {
+                    if (similarityScore > 0.9) {
+                        confidence = 'Very High';
+                    } else if (similarityScore > 0.8) {
+                        confidence = 'High';
+                    } else {
+                        confidence = 'Moderate';
+                    }
+                } else {
+                    if (similarityScore < 0.3) {
+                        confidence = 'Very Low (Different Person)';
+                    } else if (similarityScore < 0.5) {
+                        confidence = 'Low (Different Person)';
+                    } else {
+                        confidence = 'Below Threshold';
+                    }
+                }
+                verificationConfidence.textContent = confidence;
+                
+                // Set colors based on result
+                if (isMatch) {
+                    verificationDetails.className = 'face-verification-status face-detected';
+                } else {
+                    verificationDetails.className = 'face-verification-status face-not-detected';
+                }
+                
+                verificationResult.style.display = 'block';
+                
+                // Show success message
+                const personInfo = result.person_info?.personal_info;
+                const personName = personInfo?.name || 'Unknown';
+                verificationMessage.innerHTML = `✅ Verification completed for ${personName} (ID: ${verificationRes.person_id})`;
+                verificationAlert.className = 'alert alert-success alert-dismissible fade show';
+                verificationAlert.style.display = 'block';
+            }
         });
     </script>
 
