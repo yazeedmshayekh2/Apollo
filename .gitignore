@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+
+*.pt
+*.h5
+*.pth
+*.model
+*.bin
+*.safetensors
+*.pkl
+
+# Uploads and output
+uploads/*
+!uploads/.gitkeep
+sample_images/*
+!sample_images/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Model files and cache
+*.pt
+*.pth
+*.model
+*.bin
+*.safetensors
+.cache/
+models/
+__pycache__/
+.pytest_cache/
+huggingface_hub/
+
+# Development
+.env
+.venv
+.vscode/
+.idea/
+
+# OS files
+.DS_Store 
