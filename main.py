@@ -1,9 +1,10 @@
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 import os
 import cv2
 import numpy as np
@@ -13,11 +14,18 @@ import pandas as pd
 from pathlib import Path
 import uuid
 import shutil
+import jwt
+from datetime import datetime, timedelta
 
 from ocr.document_detector import detect_document_type
 from ocr.processor import process_document, process_both_sides
 from face_verification import FaceVerification
 from person_database import PersonDatabase
+
+# Configuration
+SECRET_KEY = "your-secret-key-here"  # In production, use a secure secret key
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Create directories if they don't exist
 os.makedirs("uploads", exist_ok=True)
@@ -57,9 +65,239 @@ try:
 except Exception as e:
     print(f"Warning: Could not initialize Person Database: {e}")
 
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    
+    user = person_db.get_person_by_username(username)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
 @app.get("/")
 async def get_index():
-    return FileResponse("templates/index.html")
+    return FileResponse("templates/login.html")
+
+@app.get("/register")
+async def get_register():
+    return FileResponse("templates/register.html")
+
+@app.get("/login")
+async def get_login():
+    return FileResponse("templates/login.html")
+
+@app.get("/profile")
+async def get_profile():
+    return FileResponse("templates/profile.html")
+
+@app.post("/api/register")
+async def register(
+    front_file: UploadFile = File(...),
+    back_file: Optional[UploadFile] = File(None),
+    document_type: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    phone_number: str = Form(...)
+):
+    if person_db.username_exists(username):
+        raise HTTPException(status_code=400, detail="Username already registered")
+
+    # Save uploaded files
+    front_path = f"uploads/{uuid.uuid4()}.jpg"
+    with open(front_path, "wb") as f:
+        f.write(await front_file.read())
+
+    back_path = None
+    if back_file:
+        back_path = f"uploads/{uuid.uuid4()}.jpg"
+        with open(back_path, "wb") as f:
+            f.write(await back_file.read())
+
+    try:
+        # Process document with OCR
+        if back_path:
+            ocr_result = process_both_sides(front_path, back_path, document_type)
+        else:
+            ocr_result = process_document(front_path, document_type, "front")
+
+        # Extract face from ID
+        face = face_verifier.detect_face(front_path)
+        if face is None:
+            raise HTTPException(status_code=400, detail="No face detected in document image")
+
+        # Save face image as profile picture
+        profile_image_path = f"static/profile_images/{uuid.uuid4()}.jpg"
+        os.makedirs(os.path.dirname(profile_image_path), exist_ok=True)
+        cv2.imwrite(profile_image_path, face)
+
+        # Get face embedding
+        face_embedding = face_verifier.extract_features(face)
+        if face_embedding is None:
+            raise HTTPException(status_code=400, detail="Could not extract face features")
+
+        # Generate person ID (use ID from document if available)
+        person_id = None
+        if ocr_result and isinstance(ocr_result, dict):
+            if "personal_info" in ocr_result and "id_number" in ocr_result["personal_info"]:
+                person_id = ocr_result["personal_info"]["id_number"]
+            elif "id_number" in ocr_result:
+                person_id = ocr_result["id_number"]
+
+        if not person_id:
+            person_id = str(uuid.uuid4())
+
+        # Add person to database
+        success = person_db.add_person(
+            person_id=person_id,
+            username=username,
+            password=password,
+            phone_number=phone_number,
+            document_type=document_type,
+            document_info=ocr_result,
+            face_embedding=face_embedding,
+            profile_image_path=profile_image_path
+        )
+
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to register user")
+
+        # Create access token
+        access_token = create_access_token({"sub": username})
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "profile_image_url": f"/{profile_image_path}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temporary files
+        if os.path.exists(front_path):
+            os.remove(front_path)
+        if back_path and os.path.exists(back_path):
+            os.remove(back_path)
+
+@app.post("/api/login")
+async def login(face_image: UploadFile = File(...)):
+    try:
+        # Save uploaded face image
+        temp_path = f"uploads/{uuid.uuid4()}.jpg"
+        with open(temp_path, "wb") as f:
+            f.write(await face_image.read())
+
+        # Detect and get embedding for the login face
+        login_face = face_verifier.detect_face(temp_path)
+        if login_face is None:
+            raise HTTPException(status_code=400, detail="No face detected in the image")
+
+        login_embedding = face_verifier.extract_features(login_face)
+        if login_embedding is None:
+            raise HTTPException(status_code=400, detail="Could not extract face features")
+
+        # Get all face embeddings from database
+        stored_embeddings = person_db.get_all_face_embeddings()
+
+        # Find the best match using cosine similarity
+        best_match_id = None
+        best_match_score = float('-inf')
+        
+        def cosine_similarity(a, b):
+            # Ensure inputs are numpy arrays
+            if not isinstance(a, np.ndarray):
+                a = np.array(a)
+            if not isinstance(b, np.ndarray):
+                b = np.array(b)
+            
+            # Calculate cosine similarity
+            dot_product = np.dot(a, b)
+            norm_a = np.linalg.norm(a)
+            norm_b = np.linalg.norm(b)
+            
+            if norm_a == 0 or norm_b == 0:
+                return 0
+            
+            return dot_product / (norm_a * norm_b)
+        
+        for person_id, stored_embedding in stored_embeddings.items():
+            similarity = cosine_similarity(login_embedding, stored_embedding)
+            if similarity > best_match_score:
+                best_match_score = similarity
+                best_match_id = person_id
+
+        # Check if we found a match above threshold (0.7 is a common threshold for cosine similarity)
+        SIMILARITY_THRESHOLD = 0.7
+        if best_match_score < SIMILARITY_THRESHOLD:
+            raise HTTPException(status_code=401, detail="Face not recognized")
+
+        # Get user information
+        user = person_db.get_person(best_match_id)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        # Create access token
+        access_token = create_access_token({"sub": user["username"]})
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+@app.get("/api/profile")
+async def get_profile_data(user: dict = Depends(get_current_user)):
+    try:
+        # Extract relevant information from document_info
+        doc_info = user.get('document_info', {})
+        if not doc_info:
+            doc_info = {}
+
+        personal_info = doc_info.get('personal_info', {})
+        if not personal_info:
+            personal_info = {}
+
+        profile_data = {
+            "name": personal_info.get('name', 'N/A'),
+            "id_number": personal_info.get('id_number', 'N/A'),
+            "nationality": personal_info.get('nationality', 'N/A'),
+            "date_of_birth": personal_info.get('date_of_birth', 'N/A'),
+            "username": user.get('username', 'N/A'),
+            "phone_number": user.get('phone_number', 'N/A'),
+            "document_type": user.get('document_type', 'N/A'),
+            "document_expiry": doc_info.get('expiry_date', 'N/A'),
+            "profile_image_url": f"/{user.get('profile_image_path', '')}"
+        }
+        
+        return profile_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse(url="/login")
+    return response
 
 @app.post("/api/detect-document")
 async def detect_document(file: UploadFile = File(...)):

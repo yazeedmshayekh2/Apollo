@@ -7,6 +7,9 @@ import json
 from typing import Dict, List, Optional, Any
 import cv2
 import os
+import sqlite3
+import bcrypt
+from pathlib import Path
 
 class PersonDatabase:
     """
@@ -14,38 +17,246 @@ class PersonDatabase:
     along with face embeddings for each person
     """
     
-    def __init__(self, mongo_uri: str = 'mongodb://localhost:27017/', 
-                 database_name: str = 'person_verification'):
-        """
-        Initialize the PersonDatabase with MongoDB connection
-        
-        Args:
-            mongo_uri: MongoDB connection string
-            database_name: Name of the database to use
-        """
+    def __init__(self, db_path="people.db"):
+        """Initialize database connections for both SQLite and MongoDB"""
+        self.db_path = db_path
+        self._init_sqlite()
+        self._init_mongodb()
+
+    def _init_sqlite(self):
+        """Initialize SQLite database"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS people (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    phone_number TEXT,
+                    document_type TEXT,
+                    document_info TEXT,
+                    face_embedding TEXT,
+                    profile_image_path TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+
+    def _init_mongodb(self):
+        """Initialize MongoDB connection"""
         try:
-            self.client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
-            self.client.server_info()  # Test connection
+            self.mongo_client = MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=2000)
+            self.mongo_client.server_info()
             print("Connected to MongoDB successfully")
+            self.mongo_db = self.mongo_client['face_verification']
+            self.face_features_collection = self.mongo_db['face_features']
             
-            self.db = self.client[database_name]
+            # Clean up any documents with null person_id
+            self.face_features_collection.delete_many({"person_id": None})
             
-            # Collections for different types of data
-            self.persons_collection = self.db['persons']  # Main person records
-            self.documents_collection = self.db['documents']  # Document records
-            self.face_embeddings_collection = self.db['face_embeddings']  # Face embeddings
+            # Drop existing index if it exists
+            try:
+                self.face_features_collection.drop_index("person_id_1")
+            except Exception:
+                pass  # Index might not exist
             
-            # Create indexes for better performance
-            self._create_indexes()
-            
+            # Create index with partial filter to exclude null values
+            self.face_features_collection.create_index(
+                "person_id",
+                unique=True,
+                partialFilterExpression={"person_id": {"$type": "string"}}
+            )
+            print("MongoDB indexes created successfully")
         except Exception as e:
             print(f"Warning: Could not connect to MongoDB: {e}")
-            print("Will continue without database functionality")
-            self.client = None
-            self.db = None
-            self.persons_collection = None
-            self.documents_collection = None
-            self.face_embeddings_collection = None
+            self.mongo_client = None
+            self.mongo_db = None
+            self.face_features_collection = None
+
+    def add_person(self, person_id, username, password, phone_number, document_type, document_info, face_embedding, profile_image_path):
+        """Add a new person to both SQLite and MongoDB"""
+        # Validate person_id
+        if not person_id:
+            raise ValueError("person_id cannot be null or empty")
+
+        # Hash the password
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Convert document info to string if it's a dict
+        if isinstance(document_info, dict):
+            document_info_str = json.dumps(document_info)
+        else:
+            document_info_str = document_info
+
+        # Save to SQLite
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                conn.execute("""
+                    INSERT INTO people (id, username, password_hash, phone_number, document_type, 
+                                     document_info, profile_image_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (person_id, username, password_hash, phone_number, document_type, 
+                     document_info_str, profile_image_path))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                return False
+
+        # Save face embedding to MongoDB
+        if self.face_features_collection and face_embedding is not None:
+            try:
+                # Convert numpy array to list for MongoDB storage
+                face_embedding_list = face_embedding.tolist() if isinstance(face_embedding, np.ndarray) else face_embedding
+                
+                # Store in MongoDB
+                self.face_features_collection.update_one(
+                    {"person_id": person_id},
+                    {
+                        "$set": {
+                            "face_embedding": face_embedding_list,
+                            "username": username,
+                            "updated_at": datetime.utcnow()
+                        }
+                    },
+                    upsert=True
+                )
+            except Exception as e:
+                print(f"Warning: Could not save face embedding to MongoDB: {e}")
+                # If MongoDB fails, store embedding in SQLite as fallback
+                self._update_sqlite_embedding(person_id, face_embedding)
+                
+        return True
+
+    def _update_sqlite_embedding(self, person_id, face_embedding):
+        """Update face embedding in SQLite as fallback"""
+        if face_embedding is not None:
+            face_embedding_str = json.dumps(face_embedding.tolist()) if isinstance(face_embedding, np.ndarray) else json.dumps(face_embedding)
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("UPDATE people SET face_embedding = ? WHERE id = ?", 
+                           (face_embedding_str, person_id))
+                conn.commit()
+
+    def get_all_face_embeddings(self):
+        """Get all face embeddings, preferring MongoDB but falling back to SQLite"""
+        embeddings = {}
+        
+        # Try MongoDB first
+        if self.face_features_collection:
+            try:
+                cursor = self.face_features_collection.find({}, {"person_id": 1, "face_embedding": 1})
+                for doc in cursor:
+                    if "face_embedding" in doc:
+                        embeddings[doc["person_id"]] = np.array(doc["face_embedding"])
+                if embeddings:  # If we got embeddings from MongoDB, return them
+                    return embeddings
+            except Exception as e:
+                print(f"Warning: Could not retrieve face embeddings from MongoDB: {e}")
+
+        # Fallback to SQLite
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, face_embedding 
+                FROM people 
+                WHERE face_embedding IS NOT NULL AND is_active = 1
+            """)
+            results = cursor.fetchall()
+            
+            for person_id, embedding_str in results:
+                if embedding_str:
+                    embeddings[person_id] = np.array(json.loads(embedding_str))
+        
+        return embeddings
+
+    def verify_password(self, username, password):
+        """Verify password from SQLite"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT password_hash FROM people WHERE username = ? AND is_active = 1", (username,))
+            result = cursor.fetchone()
+            if result:
+                stored_hash = result[0]
+                return bcrypt.checkpw(password.encode('utf-8'), stored_hash)
+            return False
+
+    def get_person_by_username(self, username):
+        """Get person info from both SQLite and MongoDB"""
+        # Get basic info from SQLite
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, username, phone_number, document_type, document_info, 
+                       profile_image_path
+                FROM people 
+                WHERE username = ? AND is_active = 1
+            """, (username,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return None
+
+            person_data = {
+                'id': result[0],
+                'username': result[1],
+                'phone_number': result[2],
+                'document_type': result[3],
+                'document_info': json.loads(result[4]) if result[4] else None,
+                'profile_image_path': result[5]
+            }
+
+            # Try to get face embedding from MongoDB
+            if self.face_features_collection:
+                try:
+                    mongo_doc = self.face_features_collection.find_one({"person_id": person_data['id']})
+                    if mongo_doc and "face_embedding" in mongo_doc:
+                        person_data['face_embedding'] = np.array(mongo_doc["face_embedding"])
+                except Exception as e:
+                    print(f"Warning: Could not retrieve face embedding from MongoDB: {e}")
+
+            return person_data
+
+    def get_person(self, person_id):
+        """Get person info from both SQLite and MongoDB"""
+        # Get basic info from SQLite
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, username, phone_number, document_type, document_info, 
+                       profile_image_path
+                FROM people 
+                WHERE id = ? AND is_active = 1
+            """, (person_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return None
+
+            person_data = {
+                'id': result[0],
+                'username': result[1],
+                'phone_number': result[2],
+                'document_type': result[3],
+                'document_info': json.loads(result[4]) if result[4] else None,
+                'profile_image_path': result[5]
+            }
+
+            # Try to get face embedding from MongoDB
+            if self.face_features_collection:
+                try:
+                    mongo_doc = self.face_features_collection.find_one({"person_id": person_id})
+                    if mongo_doc and "face_embedding" in mongo_doc:
+                        person_data['face_embedding'] = np.array(mongo_doc["face_embedding"])
+                except Exception as e:
+                    print(f"Warning: Could not retrieve face embedding from MongoDB: {e}")
+
+            return person_data
+
+    def username_exists(self, username):
+        """Check if username exists in SQLite"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT 1 FROM people WHERE username = ? AND is_active = 1", (username,))
+            return cursor.fetchone() is not None
+
+    def close(self):
+        """Close database connections"""
+        if hasattr(self, 'mongo_client') and self.mongo_client:
+            self.mongo_client.close()
+            print("MongoDB connection closed")
     
     def _create_indexes(self):
         """Create database indexes for better query performance"""
@@ -377,7 +588,7 @@ class PersonDatabase:
     
     def _is_connected(self) -> bool:
         """Check if MongoDB connection is available"""
-        return self.client is not None and self.db is not None
+        return self.mongo_client is not None and self.mongo_db is not None
     
     def _save_locally(self, person_id: str, ocr_data: Dict[str, Any], 
                      face_embeddings: np.ndarray, face_image_path: Optional[str]) -> bool:
@@ -452,6 +663,161 @@ class PersonDatabase:
     
     def close_connection(self):
         """Close MongoDB connection"""
-        if self.client:
-            self.client.close()
+        if self.mongo_client:
+            self.mongo_client.close()
             print("MongoDB connection closed") 
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS people (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    phone_number TEXT,
+                    document_type TEXT,
+                    document_info TEXT,
+                    face_embedding TEXT,
+                    profile_image_path TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+
+    def add_person(self, person_id, username, password, phone_number, document_type, document_info, face_embedding, profile_image_path):
+        # Hash the password
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Convert face embedding to string for storage
+        face_embedding_str = json.dumps(face_embedding.tolist()) if face_embedding is not None else None
+        
+        # Convert document info to string if it's a dict
+        if isinstance(document_info, dict):
+            document_info = json.dumps(document_info)
+
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                conn.execute("""
+                    INSERT INTO people (id, username, password_hash, phone_number, document_type, 
+                                     document_info, face_embedding, profile_image_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (person_id, username, password_hash, phone_number, document_type, 
+                     document_info, face_embedding_str, profile_image_path))
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def verify_password(self, username, password):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT password_hash FROM people WHERE username = ? AND is_active = 1", (username,))
+            result = cursor.fetchone()
+            if result:
+                stored_hash = result[0]
+                return bcrypt.checkpw(password.encode('utf-8'), stored_hash)
+            return False
+
+    def get_person_by_username(self, username):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, username, phone_number, document_type, document_info, 
+                       face_embedding, profile_image_path
+                FROM people 
+                WHERE username = ? AND is_active = 1
+            """, (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                person_data = {
+                    'id': result[0],
+                    'username': result[1],
+                    'phone_number': result[2],
+                    'document_type': result[3],
+                    'document_info': json.loads(result[4]) if result[4] else None,
+                    'face_embedding': np.array(json.loads(result[5])) if result[5] else None,
+                    'profile_image_path': result[6]
+                }
+                return person_data
+            return None
+
+    def get_person(self, person_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, username, phone_number, document_type, document_info, 
+                       face_embedding, profile_image_path
+                FROM people 
+                WHERE id = ? AND is_active = 1
+            """, (person_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                person_data = {
+                    'id': result[0],
+                    'username': result[1],
+                    'phone_number': result[2],
+                    'document_type': result[3],
+                    'document_info': json.loads(result[4]) if result[4] else None,
+                    'face_embedding': np.array(json.loads(result[5])) if result[5] else None,
+                    'profile_image_path': result[6]
+                }
+                return person_data
+            return None
+
+    def get_all_face_embeddings(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT id, face_embedding 
+                FROM people 
+                WHERE face_embedding IS NOT NULL AND is_active = 1
+            """)
+            results = cursor.fetchall()
+            
+            embeddings = {}
+            for person_id, embedding_str in results:
+                if embedding_str:
+                    embeddings[person_id] = np.array(json.loads(embedding_str))
+            return embeddings
+
+    def update_person(self, person_id, **kwargs):
+        valid_fields = {'username', 'phone_number', 'document_type', 'document_info', 
+                       'face_embedding', 'profile_image_path', 'is_active'}
+        
+        update_fields = []
+        values = []
+        
+        for key, value in kwargs.items():
+            if key in valid_fields:
+                if key == 'face_embedding' and value is not None:
+                    value = json.dumps(value.tolist())
+                elif key == 'document_info' and isinstance(value, dict):
+                    value = json.dumps(value)
+                
+                update_fields.append(f"{key} = ?")
+                values.append(value)
+        
+        if not update_fields:
+            return False
+        
+        values.append(person_id)
+        query = f"""
+            UPDATE people 
+            SET {', '.join(update_fields)}
+            WHERE id = ?
+        """
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(query, values)
+            conn.commit()
+            return True
+
+    def delete_person(self, person_id):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE people SET is_active = 0 WHERE id = ?", (person_id,))
+            conn.commit()
+            return True
+
+    def username_exists(self, username):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT 1 FROM people WHERE username = ? AND is_active = 1", (username,))
+            return cursor.fetchone() is not None 

@@ -20,5 +20,11 @@ numpy
 seaborn
 matplotlib
 tensorflow
-deepfae
 deepface
+bcrypt
+pydantic[email]
+pyjwt
+python-jose[cryptography]
+passlib
+aiofiles
+python-dotenv
